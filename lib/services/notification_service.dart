@@ -1,8 +1,10 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 
 class NotificationService {
   static final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
+  static final FlutterTts _flutterTts = FlutterTts();
 
   static Future<void> init() async {
     const AndroidInitializationSettings androidSettings =
@@ -19,9 +21,21 @@ class NotificationService {
         _notifications.resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
     await androidImplementation?.requestNotificationsPermission();
+
+    // Initialize TTS
+    await _flutterTts.setLanguage("en-US");
+    await _flutterTts.setSpeechRate(0.55);
+    await _flutterTts.setVolume(1.0);
+    await _flutterTts.setPitch(1.0);
   }
 
-  static Future<void> showPotholeWarning(double severity) async {
+  static Future<void> showPotholeWarning(double severity, double distance) async {
+    final int distStr = distance.round();
+    final String speakMessage = 'Warning: Pothole approaching in $distStr meters';
+    
+    // Speak the warning
+    await _flutterTts.speak(speakMessage);
+
     const AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
           'pothole_channel',
@@ -34,7 +48,7 @@ class NotificationService {
     await _notifications.show(
       0,
       '⚠️ Pothole Ahead',
-      'Severity: ${severity.toStringAsFixed(0)}%',
+      'Distance: $distStr meters',
       const NotificationDetails(android: androidDetails),
     );
   }

@@ -34,6 +34,100 @@ class _MapPageState extends State<MapPage> {
   final TextEditingController _startController = TextEditingController();
   final TextEditingController _endController = TextEditingController();
   StreamSubscription<Position>? _positionSubscription;
+  bool _isCurrentlyDark = false;
+  final Map<String, int> _routePotholeCounts = {};
+
+  static const String _darkMapStyle = '''
+[
+  {
+    "elementType": "geometry",
+    "stylers": [{"color": "#242f3e"}]
+  },
+  {
+    "elementType": "labels.text.fill",
+    "stylers": [{"color": "#746855"}]
+  },
+  {
+    "elementType": "labels.text.stroke",
+    "stylers": [{"color": "#242f3e"}]
+  },
+  {
+    "featureType": "administrative.locality",
+    "elementType": "labels.text.fill",
+    "stylers": [{"color": "#d59563"}]
+  },
+  {
+    "featureType": "poi",
+    "elementType": "labels.text.fill",
+    "stylers": [{"color": "#d59563"}]
+  },
+  {
+    "featureType": "poi.park",
+    "elementType": "geometry",
+    "stylers": [{"color": "#263c3f"}]
+  },
+  {
+    "featureType": "poi.park",
+    "elementType": "labels.text.fill",
+    "stylers": [{"color": "#6b9a76"}]
+  },
+  {
+    "featureType": "road",
+    "elementType": "geometry",
+    "stylers": [{"color": "#38414e"}]
+  },
+  {
+    "featureType": "road",
+    "elementType": "geometry.stroke",
+    "stylers": [{"color": "#212a37"}]
+  },
+  {
+    "featureType": "road",
+    "elementType": "labels.text.fill",
+    "stylers": [{"color": "#9ca5b3"}]
+  },
+  {
+    "featureType": "road.highway",
+    "elementType": "geometry",
+    "stylers": [{"color": "#746855"}]
+  },
+  {
+    "featureType": "road.highway",
+    "elementType": "geometry.stroke",
+    "stylers": [{"color": "#1f2835"}]
+  },
+  {
+    "featureType": "road.highway",
+    "elementType": "labels.text.fill",
+    "stylers": [{"color": "#f3d19c"}]
+  },
+  {
+    "featureType": "transit",
+    "elementType": "geometry",
+    "stylers": [{"color": "#2f3948"}]
+  },
+  {
+    "featureType": "transit.station",
+    "elementType": "labels.text.fill",
+    "stylers": [{"color": "#d59563"}]
+  },
+  {
+    "featureType": "water",
+    "elementType": "geometry",
+    "stylers": [{"color": "#17263c"}]
+  },
+  {
+    "featureType": "water",
+    "elementType": "labels.text.fill",
+    "stylers": [{"color": "#515c6d"}]
+  },
+  {
+    "featureType": "water",
+    "elementType": "labels.text.stroke",
+    "stylers": [{"color": "#17263c"}]
+  }
+]
+''';
 
   Color _getSeverityColor(double severity) {
     if (severity <= 10) {
@@ -49,6 +143,42 @@ class _MapPageState extends State<MapPage> {
     } else {
       return const Color(0xFF6A1B9A); // purple
     }
+  }
+
+  int _getPotholesOnRoute(RouteOption route) {
+    if (_routePotholeCounts.containsKey(route.id)) {
+      return _routePotholeCounts[route.id]!;
+    }
+
+    int count = 0;
+    final sampledPoints = <LatLng>[];
+    // Sample points every ~50 meters to avoid massive O(N*M) loop lag
+    for (int i = 0; i < route.points.length; i += 5) {
+      sampledPoints.add(route.points[i]);
+    }
+    if (route.points.isNotEmpty && sampledPoints.last != route.points.last) {
+      sampledPoints.add(route.points.last);
+    }
+
+    for (final circle in _potholeCircles) {
+      bool isOnRoute = false;
+      for (final pt in sampledPoints) {
+        final dist = Geolocator.distanceBetween(
+          pt.latitude,
+          pt.longitude,
+          circle.center.latitude,
+          circle.center.longitude,
+        );
+        if (dist < 30) {
+          isOnRoute = true;
+          break;
+        }
+      }
+      if (isOnRoute) count++;
+    }
+
+    _routePotholeCounts[route.id] = count;
+    return count;
   }
 
   void _checkNearbyPotholes(Position userPosition) {
@@ -74,6 +204,7 @@ class _MapPageState extends State<MapPage> {
 
           NotificationService.showPotholeWarning(
             _getSeverityFromColor(circle.fillColor),
+            distance,
           );
         }
       }
@@ -124,6 +255,11 @@ class _MapPageState extends State<MapPage> {
     _mapController = controller;
     _isMapReady = true;
 
+    // Apply dark style if currently dark
+    if (_isCurrentlyDark) {
+      _mapController!.setMapStyle(_darkMapStyle);
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _centerToMyLocation();
     });
@@ -149,6 +285,18 @@ class _MapPageState extends State<MapPage> {
   void initState() {
     super.initState();
     _startContinuousLocationMonitoring();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    if (_mapController != null && _isCurrentlyDark != isDarkMode) {
+      _isCurrentlyDark = isDarkMode;
+      _mapController!.setMapStyle(isDarkMode ? _darkMapStyle : null);
+    } else if (_mapController == null) {
+      _isCurrentlyDark = isDarkMode;
+    }
   }
 
   void _startContinuousLocationMonitoring() {
@@ -248,7 +396,7 @@ class _MapPageState extends State<MapPage> {
         duration: const Duration(milliseconds: 300),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.95),
+          color: Theme.of(context).cardColor.withOpacity(0.95),
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
@@ -263,7 +411,10 @@ class _MapPageState extends State<MapPage> {
             // Header
             Row(
               children: [
-                const Icon(Icons.directions, color: Colors.blue),
+                Icon(
+                  Icons.directions,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
                 const SizedBox(width: 8),
                 const Text(
                   "Plan Your Route",
@@ -434,7 +585,7 @@ class _MapPageState extends State<MapPage> {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Theme.of(context).cardColor,
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
@@ -453,7 +604,7 @@ class _MapPageState extends State<MapPage> {
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: Colors.blue.shade700,
+                    color: Theme.of(context).colorScheme.primary,
                     shape: BoxShape.circle,
                   ),
                   child: const Icon(Icons.route, color: Colors.white, size: 24),
@@ -485,7 +636,7 @@ class _MapPageState extends State<MapPage> {
 
             // Route Options - Horizontal Scroll
             SizedBox(
-              height: 140,
+              height: 165,
               child: provider.routes.isEmpty
                   ? const Center(
                       child: Column(
@@ -579,12 +730,16 @@ class _MapPageState extends State<MapPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.grey.shade100,
+        color: Theme.of(context).dividerColor.withOpacity(0.05),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
         children: [
-          const Icon(Icons.travel_explore, size: 20, color: Colors.blue),
+          Icon(
+            Icons.travel_explore,
+            size: 20,
+            color: Theme.of(context).colorScheme.primary,
+          ),
           const SizedBox(width: 8),
           const Text(
             'Travel by:',
@@ -651,10 +806,14 @@ class _MapPageState extends State<MapPage> {
         margin: const EdgeInsets.only(right: 12),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: isSelected ? color.withOpacity(0.1) : Colors.grey.shade50,
+          color: isSelected
+              ? color.withOpacity(0.1)
+              : Theme.of(context).dividerColor.withOpacity(0.05),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isSelected ? color : Colors.grey.shade300,
+            color: isSelected
+                ? color
+                : Theme.of(context).dividerColor.withOpacity(0.2),
             width: isSelected ? 2 : 1,
           ),
         ),
@@ -715,7 +874,32 @@ class _MapPageState extends State<MapPage> {
 
             Text(
               _formatDuration(route.duration),
-              style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+              style: TextStyle(
+                fontSize: 14,
+                color:
+                    Theme.of(context).textTheme.bodySmall?.color ??
+                    Colors.grey.shade600,
+              ),
+            ),
+
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                const Icon(
+                  Icons.warning_amber_rounded,
+                  size: 14,
+                  color: Colors.orange,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  '${_getPotholesOnRoute(route)} potholes',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Colors.orange,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
             ),
 
             const Spacer(),
@@ -769,7 +953,9 @@ class _MapPageState extends State<MapPage> {
                   Expanded(
                     child: LinearProgressIndicator(
                       value: provider.progress,
-                      backgroundColor: Colors.grey[300],
+                      backgroundColor: Theme.of(
+                        context,
+                      ).dividerColor.withOpacity(0.1),
                       color: Colors.green,
                       borderRadius: BorderRadius.circular(10),
                     ),

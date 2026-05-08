@@ -3,6 +3,7 @@ import 'package:new_mapper/pages/HomePage.dart';
 import 'package:new_mapper/pages/map_page.dart';
 import 'package:new_mapper/providers/map_provider.dart';
 import 'package:new_mapper/providers/navigation_provider.dart';
+import 'package:new_mapper/providers/theme_provider.dart';
 import 'package:new_mapper/services/notification_service.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -21,25 +22,28 @@ Future<void> main() async {
       providers: [
         ChangeNotifierProvider(create: (_) => MapProvider()),
         ChangeNotifierProvider(create: (_) => NavigationProvider()),
+        ChangeNotifierProvider(create: (_) => ThemeProvider()),
       ],
       child: const MyApp(),
     ),
   );
 }
 
-class MyApp extends StatefulWidget {
+class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
   @override
-  State<MyApp> createState() => _MyAppState();
-}
-
-class _MyAppState extends State<MyApp> {
-  @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
-      home: Homepage(),
-      debugShowCheckedModeBanner: false,
+    return Consumer<ThemeProvider>(
+      builder: (context, themeProvider, child) {
+        return MaterialApp(
+          home: const Homepage(),
+          debugShowCheckedModeBanner: false,
+          theme: themeProvider.lightTheme,
+          darkTheme: themeProvider.darkTheme,
+          themeMode: themeProvider.themeMode,
+        );
+      },
     );
   }
 }
