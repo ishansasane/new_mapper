@@ -13,7 +13,7 @@ class PotholeMonitorService {
   factory PotholeMonitorService() => _instance;
   PotholeMonitorService._internal();
 
-  StreamSubscription<AccelerometerEvent>? _accelerometerSubscription;
+  StreamSubscription<UserAccelerometerEvent>? _userAccelerometerSubscription;
   StreamSubscription<GyroscopeEvent>? _gyroscopeSubscription;
   StreamSubscription<Position>? _positionSubscription;
 
@@ -36,6 +36,21 @@ class PotholeMonitorService {
     _isMonitoring = true;
     _detectedPotholes.clear();
 
+    // Try to get initial position immediately
+    try {
+      _currentPosition = await Geolocator.getLastKnownPosition();
+      Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.best,
+        timeLimit: const Duration(seconds: 5),
+      ).then((Position position) {
+        _currentPosition = position;
+      }).catchError((_) {
+        // Ignore timeout
+      });
+    } catch (e) {
+      print("Error getting initial position: $e");
+    }
+
     // Start location updates
     _positionSubscription =
         Geolocator.getPositionStream(
@@ -47,15 +62,15 @@ class PotholeMonitorService {
           _currentPosition = position;
         });
 
-    // Start accelerometer monitoring
-    _accelerometerSubscription = accelerometerEvents.listen((
-      AccelerometerEvent event,
+    // Start accelerometer monitoring (using user accelerometer to exclude gravity)
+    _userAccelerometerSubscription = userAccelerometerEventStream().listen((
+      UserAccelerometerEvent event,
     ) {
       _handleSensorData(event.x, event.y, event.z, 'accelerometer');
     });
 
     // Start gyroscope monitoring
-    _gyroscopeSubscription = gyroscopeEvents.listen((GyroscopeEvent event) {
+    _gyroscopeSubscription = gyroscopeEventStream().listen((GyroscopeEvent event) {
       _handleSensorData(event.x, event.y, event.z, 'gyroscope');
     });
   }
@@ -65,9 +80,9 @@ class PotholeMonitorService {
   double _lastGyroscope = 0.0;
 
   void _handleSensorData(double x, double y, double z, String sensorType) {
-    if (!_isMonitoring || _currentPosition == null) return;
+    if (!_isMonitoring) return;
 
-    double magnitude = (x * x + y * y + z * z);
+    double magnitude = sqrt(x * x + y * y + z * z);
 
     if (sensorType == 'accelerometer') {
       _lastAcceleration = magnitude;
@@ -78,6 +93,7 @@ class PotholeMonitorService {
     // Detect pothole based on threshold values
     if (_lastAcceleration > ACCELERATION_THRESHOLD &&
         _lastGyroscope > GYROSCOPE_THRESHOLD) {
+      
       // Calculate severity based on sensor values
       double severity =
           ((_lastAcceleration - ACCELERATION_THRESHOLD) +
@@ -85,8 +101,9 @@ class PotholeMonitorService {
           2;
 
       final pothole = PotholeData(
-        latitude: _currentPosition!.latitude,
-        longitude: _currentPosition!.longitude,
+        // Use 0.0 as fallback if GPS hasn't locked yet, so shaking works indoors
+        latitude: _currentPosition?.latitude ?? 0.0,
+        longitude: _currentPosition?.longitude ?? 0.0,
         acceleration: _lastAcceleration,
         gyroscope: _lastGyroscope,
         timestamp: DateTime.now(),
@@ -119,7 +136,8 @@ class PotholeMonitorService {
       ),
     );
 
-    if (recentPothole.latitude == 0) {
+    // If recentPothole.severity == 0, it means the orElse was returned, so it's a new pothole
+    if (recentPothole.severity == 0) {
       _detectedPotholes.add(pothole);
       _potholesStreamController.add(List.from(_detectedPotholes));
       _savePotholesToStorage();
@@ -132,6 +150,9 @@ class PotholeMonitorService {
     double lat2,
     double lon2,
   ) {
+    // Avoid calculation if both points are dummy (0,0)
+    if (lat1 == 0 && lon1 == 0 && lat2 == 0 && lon2 == 0) return 0;
+    
     const double earthRadius = 6371000; // meters
     double dLat = _toRadians(lat2 - lat1);
     double dLon = _toRadians(lon2 - lon1);
@@ -152,11 +173,11 @@ class PotholeMonitorService {
   Future<void> stopMonitoring() async {
     _isMonitoring = false;
 
-    await _accelerometerSubscription?.cancel();
+    await _userAccelerometerSubscription?.cancel();
     await _gyroscopeSubscription?.cancel();
     await _positionSubscription?.cancel();
 
-    _accelerometerSubscription = null;
+    _userAccelerometerSubscription = null;
     _gyroscopeSubscription = null;
     _positionSubscription = null;
 
@@ -198,7 +219,7 @@ class PotholeMonitorService {
   bool get isMonitoring => _isMonitoring;
 
   void dispose() {
-    _accelerometerSubscription?.cancel();
+    _userAccelerometerSubscription?.cancel();
     _gyroscopeSubscription?.cancel();
     _positionSubscription?.cancel();
     _potholesStreamController.close();

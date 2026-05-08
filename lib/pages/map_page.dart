@@ -1,4 +1,5 @@
 // pages/map_page.dart
+import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'package:new_mapper/pages/location_selection_page.dart';
@@ -32,6 +33,7 @@ class _MapPageState extends State<MapPage> {
   bool _showSearchPanel = true;
   final TextEditingController _startController = TextEditingController();
   final TextEditingController _endController = TextEditingController();
+  StreamSubscription<Position>? _positionSubscription;
 
   Color _getSeverityColor(double severity) {
     if (severity <= 10) {
@@ -50,6 +52,11 @@ class _MapPageState extends State<MapPage> {
   }
 
   void _checkNearbyPotholes(Position userPosition) {
+    // Speed is in m/s. Calculate how far the user travels in 15 seconds.
+    // Default to a 50-meter minimum radius if moving slowly or stopped.
+    final speed = userPosition.speed;
+    final warningDistance = speed > 3.33 ? speed * 15 : 50.0;
+
     for (final circle in _potholeCircles) {
       final distance = Geolocator.distanceBetween(
         userPosition.latitude,
@@ -58,8 +65,8 @@ class _MapPageState extends State<MapPage> {
         circle.center.longitude,
       );
 
-      // Trigger alert if within 50 meters
-      if (distance <= 50) {
+      // Trigger alert if within the dynamic warning distance (at least 15 seconds ahead)
+      if (distance <= warningDistance) {
         final potholeId = circle.circleId.value;
 
         if (!_alertedPotholes.contains(potholeId)) {
@@ -139,9 +146,29 @@ class _MapPageState extends State<MapPage> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _startContinuousLocationMonitoring();
+  }
+
+  void _startContinuousLocationMonitoring() {
+    _positionSubscription =
+        Geolocator.getPositionStream(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            distanceFilter: 5, // Update every 5 meters
+          ),
+        ).listen((Position position) {
+          // Check for nearby potholes on every location update
+          _checkNearbyPotholes(position);
+        });
+  }
+
+  @override
   void dispose() {
     _startController.dispose();
     _endController.dispose();
+    _positionSubscription?.cancel();
     super.dispose();
   }
 

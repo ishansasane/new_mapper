@@ -173,7 +173,7 @@ class _HomePageState extends State<HomePage> {
 
     // Check accelerometer and gyroscope availability
     try {
-      await accelerometerEvents.first.timeout(const Duration(seconds: 2));
+      await userAccelerometerEventStream().first.timeout(const Duration(seconds: 2));
       setState(() {
         accelerometerActive = true;
       });
@@ -184,7 +184,7 @@ class _HomePageState extends State<HomePage> {
     }
 
     try {
-      await gyroscopeEvents.first.timeout(const Duration(seconds: 2));
+      await gyroscopeEventStream().first.timeout(const Duration(seconds: 2));
       setState(() {
         gyroscopeActive = true;
       });
@@ -394,11 +394,14 @@ class _HomePageState extends State<HomePage> {
                     children: [
                       Icon(Icons.warning, color: Colors.orange),
                       const SizedBox(width: 8),
-                      Text(
-                        "Monitoring Active - $potholeCount potholes detected",
-                        style: GoogleFonts.poppins(
-                          fontWeight: FontWeight.w600,
-                          color: Colors.orange,
+                      Flexible(
+                        child: Text(
+                          "Monitoring Active - $potholeCount potholes detected",
+                          style: GoogleFonts.poppins(
+                            fontWeight: FontWeight.w600,
+                            color: Colors.orange,
+                          ),
+                          textAlign: TextAlign.center,
                         ),
                       ),
                     ],

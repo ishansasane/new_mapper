@@ -13,6 +13,12 @@ class NotificationService {
     );
 
     await _notifications.initialize(settings);
+
+    // Request notification permissions for Android 13+
+    final AndroidFlutterLocalNotificationsPlugin? androidImplementation =
+        _notifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    await androidImplementation?.requestNotificationsPermission();
   }
 
   static Future<void> showPotholeWarning(double severity) async {
