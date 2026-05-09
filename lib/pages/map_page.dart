@@ -151,24 +151,52 @@ class _MapPageState extends State<MapPage> {
     }
 
     int count = 0;
-    final sampledPoints = <LatLng>[];
-    // Sample points every ~50 meters to avoid massive O(N*M) loop lag
-    for (int i = 0; i < route.points.length; i += 5) {
-      sampledPoints.add(route.points[i]);
+    final densePoints = <LatLng>[];
+    
+    // Interpolate points so they are at most 20 meters apart
+    for (int i = 0; i < route.points.length - 1; i++) {
+      final p1 = route.points[i];
+      final p2 = route.points[i + 1];
+      densePoints.add(p1);
+      
+      final d = Geolocator.distanceBetween(
+        p1.latitude,
+        p1.longitude,
+        p2.latitude,
+        p2.longitude,
+      );
+      
+      if (d > 20) {
+        int numInterpolations = (d / 20).floor();
+        for (int j = 1; j <= numInterpolations; j++) {
+          double fraction = j / (numInterpolations + 1);
+          double lat = p1.latitude + (p2.latitude - p1.latitude) * fraction;
+          double lon = p1.longitude + (p2.longitude - p1.longitude) * fraction;
+          densePoints.add(LatLng(lat, lon));
+        }
+      }
     }
-    if (route.points.isNotEmpty && sampledPoints.last != route.points.last) {
-      sampledPoints.add(route.points.last);
+    if (route.points.isNotEmpty) {
+      densePoints.add(route.points.last);
     }
 
     for (final circle in _potholeCircles) {
       bool isOnRoute = false;
-      for (final pt in sampledPoints) {
+      for (final pt in densePoints) {
+        // Fast bounding box check (0.0005 deg is approx 55 meters)
+        // This prevents doing expensive math for points far away
+        if ((circle.center.latitude - pt.latitude).abs() > 0.0005 ||
+            (circle.center.longitude - pt.longitude).abs() > 0.0005) {
+          continue;
+        }
+
         final dist = Geolocator.distanceBetween(
           pt.latitude,
           pt.longitude,
           circle.center.latitude,
           circle.center.longitude,
         );
+        
         if (dist < 30) {
           isOnRoute = true;
           break;
@@ -235,7 +263,7 @@ class _MapPageState extends State<MapPage> {
           Circle(
             circleId: CircleId('pothole_$i'),
             center: LatLng(p['latitude'], p['longitude']),
-            radius: 18, // 🔵 DOT SIZE (meters)
+            radius: 2, // 🔵 DOT SIZE (meters)
             fillColor: _getSeverityColor(severity).withOpacity(0.8),
             strokeColor: Colors.transparent,
           ),
@@ -307,9 +335,68 @@ class _MapPageState extends State<MapPage> {
             distanceFilter: 5, // Update every 5 meters
           ),
         ).listen((Position position) {
+          if (!mounted) return;
           // Check for nearby potholes on every location update
           _checkNearbyPotholes(position);
+          
+          // Drive Mode: Follow user and rotate camera if navigating
+          final provider = Provider.of<NavigationProvider>(context, listen: false);
+          if (provider.isNavigating && _mapController != null) {
+            _mapController!.animateCamera(
+              CameraUpdate.newCameraPosition(
+                CameraPosition(
+                  target: LatLng(position.latitude, position.longitude),
+                  zoom: 19.0, // High zoom for drive mode
+                  tilt: 60.0, // 3D tilt
+                  bearing: position.heading > 0 ? position.heading : 0.0,
+                ),
+              ),
+            );
+          }
         });
+  }
+
+  Future<void> _startDriveMode() async {
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      if (_mapController != null) {
+        await _mapController!.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: LatLng(position.latitude, position.longitude),
+              zoom: 19.0, // High zoom for driving
+              tilt: 60.0, // Tilt for 3D effect
+              bearing: position.heading > 0 ? position.heading : 0.0,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint("Error starting drive mode: $e");
+    }
+  }
+
+  void _stopDriveMode() async {
+    try {
+      if (_mapController != null) {
+        final provider = Provider.of<NavigationProvider>(context, listen: false);
+        final target = provider.startLocation ?? const LatLng(19.9975, 73.7898);
+        await _mapController!.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: target,
+              zoom: 14.0,
+              tilt: 0.0,
+              bearing: 0.0,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint("Error stopping drive mode: $e");
+    }
   }
 
   @override
@@ -698,6 +785,7 @@ class _MapPageState extends State<MapPage> {
                         ? () {
                             provider.startNavigation();
                             _toggleRoutePanel();
+                            _startDriveMode();
                           }
                         : null,
                     style: ElevatedButton.styleFrom(
@@ -994,7 +1082,10 @@ class _MapPageState extends State<MapPage> {
                     ],
                   ),
                   ElevatedButton.icon(
-                    onPressed: provider.stopNavigation,
+                    onPressed: () {
+                      provider.stopNavigation();
+                      _stopDriveMode();
+                    },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.red,
                       foregroundColor: Colors.white,
